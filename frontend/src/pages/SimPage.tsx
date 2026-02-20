@@ -15,6 +15,7 @@ import {
 import {TargetManager} from "../components/target/TargetManager";
 import { useTargetCreation } from "../components/target/useTargetCreation";
 import { useTargetDrag } from "../components/target/useTargetDrag";
+import ThreeSimulator from "../components/three/ThreeSimulator";
 
 
 
@@ -30,12 +31,26 @@ const SimPage = () => {
     const fpvRef = useRef<HTMLCanvasElement | null>(null);
 
     const { targets, updateTarget, removeTarget, selectTarget, selectedTargetId } = useTargetStore();
+    const [is3DMode, setIs3DMode] = useState(false);
+
 
     const targetsRef = useRef(targets);
 
     useEffect(() => {
         targetsRef.current = targets;
     }, [targets]);
+
+    useEffect(() => {
+        if (!is3DMode) {
+            // 切换回2D模式时，将焦点设置到body，确保全局键盘监听器工作
+            document.body.focus();
+            // 清空可能残留的键状态
+            keys.current = {};
+        } else {
+            // 切换到3D模式时，也清空键状态
+            keys.current = {};
+        }
+    }, [is3DMode]);
 
 
 
@@ -63,6 +78,11 @@ const SimPage = () => {
         y: 300,
         angle: -Math.PI / 2,
     })
+    const [_carStateDisplay, setCarStateDisplay] = useState({
+        x: 400,
+        y: 300,
+        angle: -Math.PI / 2,
+    })
     const [actEnabled, setActEnabled] = useState(false)
     const [actStatus, setActStatus] = useState("ACT: off")
     const actCommandRef = useRef<string>("stop")
@@ -83,6 +103,7 @@ const SimPage = () => {
                 angle: car.angle
             };
             carState.current = newState;
+            setCarStateDisplay(newState);
         });
         socket.on('act_action', (payload: {action?: number[][][]; error?: string}) => {
             if (payload?.error) {
@@ -107,9 +128,26 @@ const SimPage = () => {
     }, [])
 
     const keys = useRef<Record<string, boolean>>({})
+    const is3DModeRef = useRef(is3DMode);
+
+    useEffect(() => {
+        is3DModeRef.current = is3DMode;
+    }, [is3DMode]);
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const updatePhysics = () => {
+        console.log('updatePhysics called, is3DMode:', is3DModeRef.current, 'actEnabled:', actEnabled);
+        console.log('keys state:', {
+            ArrowUp: keys.current['ArrowUp'],
+            KeyW: keys.current['KeyW'],
+            ArrowDown: keys.current['ArrowDown'],
+            KeyS: keys.current['KeyS'],
+            ArrowLeft: keys.current['ArrowLeft'],
+            KeyA: keys.current['KeyA'],
+            ArrowRight: keys.current['ArrowRight'],
+            KeyD: keys.current['KeyD']
+        });
+        
         if (actEnabled) {
             sendAction(actCommandRef.current)
             const state = carState.current
@@ -119,15 +157,19 @@ const SimPage = () => {
             return
         }
         if (keys.current['ArrowUp'] || keys.current['KeyW']) {
+            console.log('Sending up action');
             sendAction("up")
         }
         if (keys.current['ArrowDown'] || keys.current['KeyS']) {
+            console.log('Sending down action');
             sendAction("down")
         }
         if (keys.current['ArrowLeft'] || keys.current['KeyA']) {
+            console.log('Sending left action');
             sendAction("left")
         }
         if (keys.current['ArrowRight'] || keys.current['KeyD']) {
+            console.log('Sending right action');
             sendAction("right")
         }
 
@@ -268,58 +310,90 @@ const SimPage = () => {
 
 
     useEffect(() => {
-        const canvas = canvasRef.current
-        const fpv = fpvRef.current
-        if (canvas == null || fpv == null) return
-        const ctxTop = canvas.getContext('2d')
-        const ctxFpv = fpv.getContext('2d')
+        let animationFrameId: number;
+        let lastTime = 0;
 
-        if (ctxTop == null || ctxFpv == null) return
+        const physicsLoop = (currentTime: number) => {
+            animationFrameId = window.requestAnimationFrame(physicsLoop);
+
+            // 3D模式下停止物理循环
+            if (is3DModeRef.current) {
+                return;
+            }
+
+            const delta = currentTime - lastTime;
+            if (delta < frameInterval) return;
+            lastTime = currentTime - (delta % frameInterval);
+
+            if (actEnabled) {
+                actInfer(buildObservation());
+            }
+            updatePhysics();
+        };
+
+        animationFrameId = window.requestAnimationFrame(physicsLoop);
+
+        return () => {
+            window.cancelAnimationFrame(animationFrameId);
+        };
+    }, [actEnabled, updatePhysics, is3DMode]);
+
+    // 键盘事件监听 - 始终运行（使用捕获阶段确保无论焦点在哪都能捕获）
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            console.log('SimPage keydown (capture):', e.code, 'is3DMode:', is3DModeRef.current, 'target:', e.target);
+            keys.current[e.code] = true;
+        };
+        const handleKeyUp = (e: KeyboardEvent) => {
+            console.log('SimPage keyup (capture):', e.code, 'is3DMode:', is3DModeRef.current, 'target:', e.target);
+            keys.current[e.code] = false;
+        };
+
+        // 使用捕获阶段，确保无论焦点在哪都能捕获键盘事件
+        document.addEventListener('keydown', handleKeyDown, true);
+        document.addEventListener('keyup', handleKeyUp, true);
+
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown, true);
+            document.removeEventListener('keyup', handleKeyUp, true);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (is3DMode) return;
+
+        const canvas = canvasRef.current;
+        const fpv = fpvRef.current;
+        if (canvas == null || fpv == null) return;
+        const ctxTop = canvas.getContext('2d');
+        const ctxFpv = fpv.getContext('2d');
+
+        if (ctxTop == null || ctxFpv == null) return;
 
         ctxFpv.imageSmoothingEnabled = false;
 
-        let animationFrameId: number
-
-        const handleKeyDown = (e: KeyboardEvent) => {
-            keys.current[e.code] = true
-        }
-        const handleKeyUp = (e: KeyboardEvent) => {
-            keys.current[e.code] = false
-        }
-
-        window.addEventListener('keydown', handleKeyDown)
-        window.addEventListener('keyup', handleKeyUp)
-
-
-
+        let animationFrameId: number;
         let lastTime = 0;
 
         const renderLoop = (currentTime: number) => {
-            animationFrameId = window.requestAnimationFrame(renderLoop)
+            animationFrameId = window.requestAnimationFrame(renderLoop);
 
-            const delta = currentTime - lastTime
+            const delta = currentTime - lastTime;
 
-            if (delta < frameInterval) return
+            if (delta < frameInterval) return;
 
-            lastTime = currentTime - (delta % frameInterval)
+            lastTime = currentTime - (delta % frameInterval);
 
-            if (actEnabled) {
-                actInfer(buildObservation())
-            }
-            updatePhysics()
-            drawTopDown(ctxTop)
-            drawFirstPerson(ctxFpv)
-        }
+            drawTopDown(ctxTop);
+            drawFirstPerson(ctxFpv);
+        };
 
-        animationFrameId = window.requestAnimationFrame(renderLoop)
+        animationFrameId = window.requestAnimationFrame(renderLoop);
 
         return () => {
-            window.removeEventListener('keydown', handleKeyDown)
-            window.removeEventListener('keyup', handleKeyUp)
-
-            window.cancelAnimationFrame(animationFrameId)
-        }
-    }, [actEnabled, drawTopDown, drawFirstPerson, updatePhysics, createTarget, updateTarget, handleCreateTargetInFront])
+            window.cancelAnimationFrame(animationFrameId);
+        };
+    }, [is3DMode, drawTopDown, drawFirstPerson]);
 
     const sendCommand = (cmd: string) => {
         keys.current[cmd] = true
@@ -370,55 +444,76 @@ const SimPage = () => {
                     alignItems: 'center'
                 }}>
                     <div style={{display: 'flex', flexDirection: 'row', gap: '20px'}}>
-                        <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px'}}>
-                            <div style={{position: 'relative', border: '2px solid #333'}}>
-                                <canvas
-                                    ref={canvasRef}
-                                    width={800}
-                                    height={600}
-                                    style={{background: '#f9f9f9', display: 'block'}}
-                                />
-                                <div style={{
-                                    position: 'absolute',
-                                    top: 10,
-                                    left: 10,
-                                    background: 'rgba(255,255,255,0.8)',
-                                    padding: 5
-                                }}>
-                                    使用 WASD 或 方向键 移动<br/>
-                                    使用 QE 键旋转选中的目标物<br/>
-                                    选中目标物后按 Delete 键删除
+                        {is3DMode ? (
+                            <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px'}}>
+                                <div style={{position: 'relative', border: '2px solid #333'}}>
+                                    <ThreeSimulator
+                                        targets={targets}
+                                        width={800}
+                                        height={600}
+                                        selectedTargetId={selectedTargetId}
+                                        onTargetSelect={selectTarget}
+                                        onTargetUpdate={updateTarget}
+                                    />
+                                </div>
+                                <div style={{display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center'}}>
+                                    <button onClick={() => setIs3DMode(false)}>切换到2D模式</button>
                                 </div>
                             </div>
+                        ) : (
+                            <>
+                                <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px'}}>
+                                    <div style={{position: 'relative', border: '2px solid #333'}}>
+                                        <canvas
+                                            ref={canvasRef}
+                                            width={800}
+                                            height={600}
+                                            style={{background: '#f9f9f9', display: 'block'}}
+                                        />
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: 10,
+                                            left: 10,
+                                            background: 'rgba(255,255,255,0.8)',
+                                            padding: 5
+                                        }}>
+                                            使用 WASD 或 方向键 移动<br/>
+                                            使用 QE 键旋转选中的目标物<br/>
+                                            选中目标物后按 Delete 键删除
+                                        </div>
+                                    </div>
 
-                            <div style={{display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center'}}>
-                                <button onClick={() => sendCommand('ArrowUp')}>指令: 前进</button>
-                                <button onClick={() => sendCommand('ArrowLeft')}>指令: 左转</button>
-                                <button onClick={() => sendCommand('ArrowRight')}>指令: 右转</button>
-                                <button onClick={() => sendCommand('ArrowDown')}>指令: 后退</button>
-                                <button onClick={resetCar}>重置 (Reset)</button>
-                                <button onClick={() => setActEnabled(v => !v)}>切换 ACT</button>
-                            </div>
-                    <div style={{marginTop: 8, fontSize: 12, opacity: 0.8}}>
-                        {actStatus}
-                            </div>
-                        </div>
-                        <div style={{position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
-                            <div style={{
-                                position: 'absolute',
-                                top: 5,
-                                left: 5,
-                                background: 'rgba(255,255,255,0.7)',
-                                padding: '2px 5px',
-                                fontSize: '12px'
-                            }}>车载摄像头 (Camera)
-                            </div>
-                            <canvas ref={fpvRef} width={320} height={240}
-                                    style={{background: '#000', border: '4px solid #333'}}/>
-                            <div style={{marginTop: '10px', fontSize: '14px', color: '#555', width: 320}}>
-                                说明：右侧画面是根据左侧地图实时计算生成的伪3D视角。
-                            </div>
-                        </div>
+                                    <div style={{display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center'}}>
+                                        <button onClick={() => sendCommand('ArrowUp')}>指令: 前进</button>
+                                        <button onClick={() => sendCommand('ArrowLeft')}>指令: 左转</button>
+                                        <button onClick={() => sendCommand('ArrowRight')}>指令: 右转</button>
+                                        <button onClick={() => sendCommand('ArrowDown')}>指令: 后退</button>
+                                        <button onClick={resetCar}>重置 (Reset)</button>
+                                        <button onClick={() => setActEnabled(v => !v)}>切换 ACT</button>
+                                        <button onClick={() => setIs3DMode(true)}>切换到3D模式</button>
+                                    </div>
+                            <div style={{marginTop: 8, fontSize: 12, opacity: 0.8}}>
+                                {actStatus}
+                                    </div>
+                                </div>
+                                <div style={{position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: 5,
+                                        left: 5,
+                                        background: 'rgba(255,255,255,0.7)',
+                                        padding: '2px 5px',
+                                        fontSize: '12px'
+                                    }}>车载摄像头 (Camera)
+                                    </div>
+                                    <canvas ref={fpvRef} width={320} height={240}
+                                            style={{background: '#000', border: '4px solid #333'}}/>
+                                    <div style={{marginTop: '10px', fontSize: '14px', color: '#555', width: 320}}>
+                                        说明：右侧画面是根据左侧地图实时计算生成的伪3D视角。
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             </div>

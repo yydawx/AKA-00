@@ -3,7 +3,6 @@ import {io} from "socket.io-client";
 export const socket = io();
 
 export const sendAction = (action: string) => {
-    console.log("ws send" + action);
     socket.emit('action', action);
 }
 

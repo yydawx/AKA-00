@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState, useCallback, useMemo} from "react"
+import {useEffect, useRef, useState, useCallback} from "react"
 import {actInfer, getCarState, resetCar, sendAction, socket} from "../api/socket";
 import type {Car} from "../model/car";
 import {checkCollision} from "../model/target";
@@ -7,6 +7,7 @@ import {
     MAP_W,
     MAP_H,
     renderTopDownTargets,
+    targetsToWalls,
     computeSprites,
     renderFirstPersonWalls,
     renderFirstPersonSprites
@@ -35,90 +36,6 @@ const SimPage = () => {
     useEffect(() => {
         targetsRef.current = targets;
     }, [targets]);
-
-    // 缓存边界墙
-    const boundaryWalls = useMemo(() => [
-        {x1: 0, y1: 0, x2: MAP_W, y2: 0, color: '#333'},
-        {x1: MAP_W, y1: 0, x2: MAP_W, y2: MAP_H, color: '#333'},
-        {x1: MAP_W, y1: MAP_H, x2: 0, y2: MAP_H, color: '#333'},
-        {x1: 0, y1: MAP_H, x2: 0, y2: 0, color: '#333'}
-    ], []);
-
-    // 缓存目标物转换的墙壁
-    const cachedWalls = useMemo(() => {
-        const targetWalls = targets.map(t => {
-            const c = t.color;
-            if (t.type === 'RECT') {
-                const width = t.w || 0;
-                const height = t.h || 0;
-
-                let vertices = [
-                    {x: t.x, y: t.y},
-                    {x: t.x + width, y: t.y},
-                    {x: t.x + width, y: t.y + height},
-                    {x: t.x, y: t.y + height}
-                ];
-
-                if (t.angle) {
-                    const centerX = t.x + width / 2;
-                    const centerY = t.y + height / 2;
-
-                    vertices = vertices.map(vertex => {
-                        const dx = vertex.x - centerX;
-                        const dy = vertex.y - centerY;
-                        const angle = t.angle || 0;
-                        const rotatedX = dx * Math.cos(angle) - dy * Math.sin(angle);
-                        const rotatedY = dx * Math.sin(angle) + dy * Math.cos(angle);
-                        return {
-                            x: rotatedX + centerX,
-                            y: rotatedY + centerY
-                        };
-                    });
-                }
-
-                return [
-                    {x1: vertices[0].x, y1: vertices[0].y, x2: vertices[1].x, y2: vertices[1].y, color: c},
-                    {x1: vertices[1].x, y1: vertices[1].y, x2: vertices[2].x, y2: vertices[2].y, color: c},
-                    {x1: vertices[2].x, y1: vertices[2].y, x2: vertices[3].x, y2: vertices[3].y, color: c},
-                    {x1: vertices[3].x, y1: vertices[3].y, x2: vertices[0].x, y2: vertices[0].y, color: c}
-                ];
-            } else if (t.type === 'CYLINDER') {
-                const radius = t.r || 0;
-                const segments = 16;
-                const cylinderVertices: {x: number; y: number}[] = [];
-                
-                for (let i = 0; i < segments; i++) {
-                    const angle = (i / segments) * Math.PI * 2;
-                    cylinderVertices.push({
-                        x: t.x + Math.cos(angle) * radius,
-                        y: t.y + Math.sin(angle) * radius
-                    });
-                }
-                
-                const cylinderWalls = [];
-                for (let i = 0; i < segments; i++) {
-                    const next = (i + 1) % segments;
-                    cylinderWalls.push({
-                        x1: cylinderVertices[i].x,
-                        y1: cylinderVertices[i].y,
-                        x2: cylinderVertices[next].x,
-                        y2: cylinderVertices[next].y,
-                        color: c
-                    });
-                }
-                return cylinderWalls;
-            }
-            return [];
-        }).flat();
-
-        return [...boundaryWalls, ...targetWalls];
-    }, [targets, boundaryWalls]);
-
-    // 缓存墙壁引用
-    const wallsRef = useRef(cachedWalls);
-    useEffect(() => {
-        wallsRef.current = cachedWalls;
-    }, [cachedWalls]);
 
 
 
@@ -227,14 +144,14 @@ const SimPage = () => {
 
         if (selectedTargetId) {
             if (keys.current['KeyQ']) {
-                const target = targetsRef.current.find(t => t.id === selectedTargetId);
+                const target = targets.find(t => t.id === selectedTargetId);
                 if (target && target.type === 'RECT') {
                     const currentAngle = target.angle || 0;
                     updateTarget(selectedTargetId, { angle: currentAngle - 0.05 });
                 }
             }
             if (keys.current['KeyE']) {
-                const target = targetsRef.current.find(t => t.id === selectedTargetId);
+                const target = targets.find(t => t.id === selectedTargetId);
                 if (target && target.type === 'RECT') {
                     const currentAngle = target.angle || 0;
                     updateTarget(selectedTargetId, { angle: currentAngle + 0.05 });
@@ -250,7 +167,7 @@ const SimPage = () => {
         if (checkCollision(state.x, state.y, MAP_W, MAP_H, targetsRef.current)) {
             sendAction("stop")
         }
-    }, [actEnabled, selectedTargetId, updateTarget, removeTarget, selectTarget]);
+    }, [actEnabled, selectedTargetId, targets, updateTarget, removeTarget, selectTarget]);
 
 
 
@@ -336,11 +253,10 @@ const SimPage = () => {
         ctx.fillRect(0, h / 2, w, h / 2);
 
         const fov = Math.PI / 3;
-        // 减少射线数量，提高性能（从 w/4 减少到 w/8）
-        const rayCount = Math.max(50, Math.floor(w / 8));
+        const rayCount = w / 4;
         const rayWidth = w / rayCount;
 
-        const walls = wallsRef.current;
+        const walls = targetsToWalls(targetsRef.current);
 
         const depthBuffer = renderFirstPersonWalls(ctx, walls, x, y, angle, w, h);
 
@@ -386,19 +302,12 @@ const SimPage = () => {
 
             lastTime = currentTime - (delta % frameInterval)
 
-            // 只在必要时执行 actInfer
             if (actEnabled) {
                 actInfer(buildObservation())
             }
-            
-            // 执行物理更新
             updatePhysics()
-            
-            // 分离渲染逻辑，避免阻塞主线程
-            requestAnimationFrame(() => {
-                drawTopDown(ctxTop);
-                drawFirstPerson(ctxFpv);
-            });
+            drawTopDown(ctxTop)
+            drawFirstPerson(ctxFpv)
         }
 
         animationFrameId = window.requestAnimationFrame(renderLoop)
@@ -409,7 +318,7 @@ const SimPage = () => {
 
             window.cancelAnimationFrame(animationFrameId)
         }
-    }, [actEnabled, drawTopDown, drawFirstPerson, updatePhysics])
+    }, [actEnabled, drawTopDown, drawFirstPerson, updatePhysics, createTarget, updateTarget, handleCreateTargetInFront])
 
     const sendCommand = (cmd: string) => {
         keys.current[cmd] = true

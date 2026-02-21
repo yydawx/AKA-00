@@ -10,9 +10,7 @@ const ModalImportDialog: React.FC<ModalImportDialogProps> = ({ isOpen, onClose }
     const [isVisible, setIsVisible] = useState(isOpen);
 
     useEffect(() => {
-        if (isOpen) {
-            setIsVisible(true);
-        } else {
+        if (!isOpen) {
             const timer = setTimeout(() => setIsVisible(false), 300);
             return () => clearTimeout(timer);
         }

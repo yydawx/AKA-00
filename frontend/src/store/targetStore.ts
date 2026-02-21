@@ -67,8 +67,8 @@ export const useTargetStore = create<TargetStore>()(
                         return false;
                     }
 
-                    if (t.type !== 'RECT' && t.type !== 'CIRCLE') {
-                        console.warn('跳过无效目标物：type必须为RECT或CIRCLE', t);
+                    if (t.type !== 'RECT' && t.type !== 'CIRCLE' && t.type !== 'CYLINDER') {
+                        console.warn('跳过无效目标物：type必须为RECT、CIRCLE或CYLINDER', t);
                         return false;
                     }
 
@@ -83,7 +83,7 @@ export const useTargetStore = create<TargetStore>()(
                         }
                     }
 
-                    if (t.type === 'CIRCLE') {
+                    if (t.type === 'CIRCLE' || t.type === 'CYLINDER') {
                         if (t.r !== undefined && typeof t.r !== 'number') {
                             console.warn('跳过无效目标物：r必须是数字', t);
                             return false;

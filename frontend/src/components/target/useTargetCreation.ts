@@ -21,7 +21,7 @@ export const useTargetCreation = (): UseTargetCreationReturn => {
             type,
             x,
             y,
-            color: type === 'RECT' ? '#8B4513' : '#2E8B57',
+            color: type === 'RECT' ? '#8B4513' : type === 'CYLINDER' ? '#4169E1' : '#2E8B57',
             angle: 0
         } as Omit<Target, 'id'>;
 
@@ -30,6 +30,11 @@ export const useTargetCreation = (): UseTargetCreationReturn => {
                 ...baseTarget,
                 w: 50,
                 h: 30
+            });
+        } else if (type === 'CYLINDER') {
+            addTarget({
+                ...baseTarget,
+                r: 20
             });
         } else {
             addTarget({

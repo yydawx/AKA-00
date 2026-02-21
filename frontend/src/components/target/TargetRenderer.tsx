@@ -98,6 +98,29 @@ export const targetsToWalls = (targets: Target[]): WallSegment[] => {
             walls.push({x1: vertices[1].x, y1: vertices[1].y, x2: vertices[2].x, y2: vertices[2].y, color: c});
             walls.push({x1: vertices[2].x, y1: vertices[2].y, x2: vertices[3].x, y2: vertices[3].y, color: c});
             walls.push({x1: vertices[3].x, y1: vertices[3].y, x2: vertices[0].x, y2: vertices[0].y, color: c});
+        } else if (t.type === 'CYLINDER') {
+            const radius = t.r || 0;
+            const segments = 16;
+            const cylinderVertices: {x: number; y: number}[] = [];
+            
+            for (let i = 0; i < segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                cylinderVertices.push({
+                    x: t.x + Math.cos(angle) * radius,
+                    y: t.y + Math.sin(angle) * radius
+                });
+            }
+            
+            for (let i = 0; i < segments; i++) {
+                const next = (i + 1) % segments;
+                walls.push({
+                    x1: cylinderVertices[i].x,
+                    y1: cylinderVertices[i].y,
+                    x2: cylinderVertices[next].x,
+                    y2: cylinderVertices[next].y,
+                    color: c
+                });
+            }
         }
     });
 
@@ -178,6 +201,32 @@ export const renderTopDownTargets = (
                 ctx.setLineDash([]);
                 ctx.lineWidth = 1;
             }
+        } else if (t.type === 'CYLINDER') {
+            const radius = t.r || 0;
+            
+            ctx.beginPath();
+            ctx.arc(t.x, t.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.lineWidth = 1;
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.beginPath();
+            ctx.arc(t.x, t.y, radius * 0.7, 0, Math.PI * 2);
+            ctx.fill();
+
+            if (t.id === selectedTargetId) {
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.arc(t.x, t.y, radius + 5, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.lineWidth = 1;
+            }
         }
     });
 };
@@ -191,7 +240,7 @@ export const computeSprites = (
   w: number,
   h: number
 ): SpriteData[] => {
-  const balls = targets.filter(t => t.type === 'CIRCLE');
+  const balls = targets.filter(t => t.type === 'CIRCLE' || t.type === 'CYLINDER');
   const halfFov = fov / 2;
   const tanHalfFov = Math.tan(halfFov);
   const eyeHeight = 20;

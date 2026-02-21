@@ -1,5 +1,5 @@
 // 目标物类型枚举
-export type TargetType = 'RECT' | 'CIRCLE';
+export type TargetType = 'RECT' | 'CIRCLE' | 'CYLINDER';
 
 // 目标物接口
 export interface Target {
@@ -40,7 +40,7 @@ export const isPointInTarget = (x: number, y: number, target: Target): boolean =
         const rotatedY = dx * Math.sin(-target.angle) + dy * Math.cos(-target.angle);
 
         return Math.abs(rotatedX) < width / 2 && Math.abs(rotatedY) < height / 2;
-    } else if (target.type === 'CIRCLE') {
+    } else if (target.type === 'CIRCLE' || target.type === 'CYLINDER') {
         const dx = x - target.x;
         const dy = y - target.y;
         const distance = Math.sqrt(dx * dx + dy * dy);

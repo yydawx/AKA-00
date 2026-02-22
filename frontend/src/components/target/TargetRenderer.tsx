@@ -296,10 +296,10 @@ export const renderFirstPersonWalls = (
     carY: number,
     carAngle: number,
     w: number,
-    h: number
+    h: number,
+    rayCount: number = 40
 ): number[] => {
     const fov = Math.PI / 3;
-    const rayCount = w / 4;
     const rayWidth = w / rayCount;
     const depthBuffer = new Array(rayCount).fill(Infinity);
 

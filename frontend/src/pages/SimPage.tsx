@@ -22,7 +22,7 @@ import { useTargetDrag } from "../components/target/useTargetDrag";
 const INITIAL_LOCAL_W = MAP_W / 2;
 const INITIAL_LOCAL_H = MAP_H / 2;
 
-const FPS = 20
+const FPS = 30
 const frameInterval = 1000 / FPS
 
 const SimPage = () => {
@@ -63,9 +63,12 @@ const SimPage = () => {
         y: 300,
         angle: -Math.PI / 2,
     })
+    const is3DModeRef = useRef<boolean>(true)
     const [actEnabled, setActEnabled] = useState(false)
     const [actStatus, setActStatus] = useState("ACT: off")
     const actCommandRef = useRef<string>("stop")
+    const [isGrabbing, setIsGrabbing] = useState(false)
+    const grabbedTargetIdRef = useRef<string | null>(null)
 
     const handleCreateTargetInFront = useCallback(() => {
         const {x, y, angle} = carState.current;
@@ -127,47 +130,55 @@ const SimPage = () => {
             if (checkCollision(state.x, state.y, MAP_W, MAP_H, targetsRef.current)) {
                 sendAction("stop")
             }
-            return
-        }
-        if (keys.current['ArrowUp'] || keys.current['KeyW']) {
-            sendAction("up")
-        }
-        if (keys.current['ArrowDown'] || keys.current['KeyS']) {
-            sendAction("down")
-        }
-        if (keys.current['ArrowLeft'] || keys.current['KeyA']) {
-            sendAction("left")
-        }
-        if (keys.current['ArrowRight'] || keys.current['KeyD']) {
-            sendAction("right")
-        }
+        } else {
+            if (keys.current['ArrowUp'] || keys.current['KeyW']) {
+                sendAction("up")
+            }
+            if (keys.current['ArrowDown'] || keys.current['KeyS']) {
+                sendAction("down")
+            }
+            if (keys.current['ArrowLeft'] || keys.current['KeyA']) {
+                sendAction("left")
+            }
+            if (keys.current['ArrowRight'] || keys.current['KeyD']) {
+                sendAction("right")
+            }
 
-        if (selectedTargetId) {
-            if (keys.current['KeyQ']) {
-                const target = targets.find(t => t.id === selectedTargetId);
-                if (target && target.type === 'RECT') {
-                    const currentAngle = target.angle || 0;
-                    updateTarget(selectedTargetId, { angle: currentAngle - 0.05 });
+            if (selectedTargetId) {
+                if (keys.current['KeyQ']) {
+                    const target = targetsRef.current.find(t => t.id === selectedTargetId);
+                    if (target && target.type === 'RECT') {
+                        const currentAngle = target.angle || 0;
+                        updateTarget(selectedTargetId, { angle: currentAngle - 0.05 });
+                    }
+                }
+                if (keys.current['KeyE']) {
+                    const target = targetsRef.current.find(t => t.id === selectedTargetId);
+                    if (target && target.type === 'RECT') {
+                        const currentAngle = target.angle || 0;
+                        updateTarget(selectedTargetId, { angle: currentAngle + 0.05 });
+                    }
+                }
+                if (keys.current['Delete']) {
+                    removeTarget(selectedTargetId);
+                    selectTarget(null);
                 }
             }
-            if (keys.current['KeyE']) {
-                const target = targets.find(t => t.id === selectedTargetId);
-                if (target && target.type === 'RECT') {
-                    const currentAngle = target.angle || 0;
-                    updateTarget(selectedTargetId, { angle: currentAngle + 0.05 });
-                }
-            }
-            if (keys.current['Delete']) {
-                removeTarget(selectedTargetId);
-                selectTarget(null);
+
+            const state = carState.current;
+            if (checkCollision(state.x, state.y, MAP_W, MAP_H, targetsRef.current)) {
+                sendAction("stop")
             }
         }
 
-        const state = carState.current;
-        if (checkCollision(state.x, state.y, MAP_W, MAP_H, targetsRef.current)) {
-            sendAction("stop")
+        // 处理抓取的球体跟随小车移动
+        if (grabbedTargetIdRef.current) {
+            const {x, y, angle} = carState.current;
+            const grabberX = x + Math.cos(angle) * 30;
+            const grabberY = y + Math.sin(angle) * 30;
+            updateTarget(grabbedTargetIdRef.current, {x: grabberX, y: grabberY});
         }
-    }, [actEnabled, selectedTargetId, targets, updateTarget, removeTarget, selectTarget]);
+    }, [actEnabled, selectedTargetId, updateTarget, removeTarget, selectTarget]);
 
 
 
@@ -213,6 +224,27 @@ const SimPage = () => {
         ctx.fill();
         ctx.fillStyle = '#2c3e50'
         ctx.fillRect(5, -8, 10, 16)
+        
+        // 绘制抓取器
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        if (isGrabbing) {
+            // 抓取状态：闭合的抓取器
+            ctx.beginPath();
+            ctx.moveTo(20, -8);
+            ctx.lineTo(30, -5);
+            ctx.lineTo(30, 5);
+            ctx.lineTo(20, 8);
+            ctx.stroke();
+        } else {
+            // 未抓取状态：打开的抓取器
+            ctx.beginPath();
+            ctx.moveTo(20, -8);
+            ctx.lineTo(35, -12);
+            ctx.moveTo(20, 8);
+            ctx.lineTo(35, 12);
+            ctx.stroke();
+        }
         ctx.restore();
     }
 
@@ -237,7 +269,7 @@ const SimPage = () => {
         ctx.stroke();
 
         ctx.restore()
-    }, [selectedTargetId]);
+    }, [selectedTargetId, isGrabbing]);
 
 
 
@@ -253,12 +285,12 @@ const SimPage = () => {
         ctx.fillRect(0, h / 2, w, h / 2);
 
         const fov = Math.PI / 3;
-        const rayCount = w / 4;
+        const rayCount = w / 8;
         const rayWidth = w / rayCount;
 
         const walls = targetsToWalls(targetsRef.current);
 
-        const depthBuffer = renderFirstPersonWalls(ctx, walls, x, y, angle, w, h);
+        const depthBuffer = renderFirstPersonWalls(ctx, walls, x, y, angle, w, h, rayCount);
 
         const sprites = computeSprites(targetsRef.current, x, y, angle, fov, w, h);
 
@@ -277,7 +309,8 @@ const SimPage = () => {
 
         ctxFpv.imageSmoothingEnabled = false;
 
-        let animationFrameId: number
+        let physicsFrameId: number
+        let renderFrameId: number
 
         const handleKeyDown = (e: KeyboardEvent) => {
             keys.current[e.code] = true
@@ -289,42 +322,119 @@ const SimPage = () => {
         window.addEventListener('keydown', handleKeyDown)
         window.addEventListener('keyup', handleKeyUp)
 
+        let lastPhysicsTime = 0;
+        let lastRenderTime = 0;
 
+        const physicsLoop = (currentTime: number) => {
+            physicsFrameId = window.requestAnimationFrame(physicsLoop)
 
-        let lastTime = 0;
-
-        const renderLoop = (currentTime: number) => {
-            animationFrameId = window.requestAnimationFrame(renderLoop)
-
-            const delta = currentTime - lastTime
+            const delta = currentTime - lastPhysicsTime
 
             if (delta < frameInterval) return
 
-            lastTime = currentTime - (delta % frameInterval)
+            lastPhysicsTime = currentTime - (delta % frameInterval)
 
             if (actEnabled) {
                 actInfer(buildObservation())
             }
             updatePhysics()
-            drawTopDown(ctxTop)
-            drawFirstPerson(ctxFpv)
         }
 
-        animationFrameId = window.requestAnimationFrame(renderLoop)
+        const renderLoop = (currentTime: number) => {
+            renderFrameId = window.requestAnimationFrame(renderLoop)
+
+            const delta = currentTime - lastRenderTime
+
+            if (delta < frameInterval) return
+
+            lastRenderTime = currentTime - (delta % frameInterval)
+
+            drawTopDown(ctxTop)
+            if (is3DModeRef.current) {
+                try {
+                    drawFirstPerson(ctxFpv)
+                } catch (e) {
+                    console.error('3D rendering error:', e)
+                }
+            }
+        }
+
+        physicsFrameId = window.requestAnimationFrame(physicsLoop)
+        renderFrameId = window.requestAnimationFrame(renderLoop)
 
         return () => {
             window.removeEventListener('keydown', handleKeyDown)
             window.removeEventListener('keyup', handleKeyUp)
 
-            window.cancelAnimationFrame(animationFrameId)
+            window.cancelAnimationFrame(physicsFrameId)
+            window.cancelAnimationFrame(renderFrameId)
         }
-    }, [actEnabled, drawTopDown, drawFirstPerson, updatePhysics, createTarget, updateTarget, handleCreateTargetInFront])
+    }, [actEnabled, drawTopDown, drawFirstPerson, updatePhysics])
 
     const sendCommand = (cmd: string) => {
         keys.current[cmd] = true
         setTimeout(() => {
             keys.current[cmd] = false
         }, 200)
+    }
+
+    const checkAndGrabBall = () => {
+        const {x, y, angle} = carState.current;
+        const grabberX = x + Math.cos(angle) * 30;
+        const grabberY = y + Math.sin(angle) * 30;
+        
+        // 查找抓取器位置附近的球体
+        const nearbyBall = targetsRef.current.find(target => {
+            if (target.type === 'CIRCLE') {
+                const dx = grabberX - target.x;
+                const dy = grabberY - target.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                return distance < (target.r || 0) + 10;
+            }
+            return false;
+        });
+        
+        if (nearbyBall) {
+            grabbedTargetIdRef.current = nearbyBall.id;
+            setIsGrabbing(true);
+            return true;
+        }
+        return false;
+    }
+
+    const releaseBall = () => {
+        grabbedTargetIdRef.current = null;
+        setIsGrabbing(false);
+    }
+
+    const placeBallInCylinder = () => {
+        if (!grabbedTargetIdRef.current) return false;
+        
+        const {x, y, angle} = carState.current;
+        const releaseX = x + Math.cos(angle) * 30;
+        const releaseY = y + Math.sin(angle) * 30;
+        
+        // 查找释放位置附近的圆柱体
+        const nearbyCylinder = targetsRef.current.find(target => {
+            if (target.type === 'CYLINDER') {
+                const dx = releaseX - target.x;
+                const dy = releaseY - target.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                return distance < (target.r || 0);
+            }
+            return false;
+        });
+        
+        if (nearbyCylinder) {
+            // 将球体放置到圆柱体内
+            updateTarget(grabbedTargetIdRef.current, {
+                x: nearbyCylinder.x,
+                y: nearbyCylinder.y
+            });
+            releaseBall();
+            return true;
+        }
+        return false;
     }
 
     return (
@@ -397,9 +507,14 @@ const SimPage = () => {
                                 <button onClick={() => sendCommand('ArrowDown')}>指令: 后退</button>
                                 <button onClick={resetCar}>重置 (Reset)</button>
                                 <button onClick={() => setActEnabled(v => !v)}>切换 ACT</button>
+                                <button onClick={checkAndGrabBall} disabled={isGrabbing}>抓取球体</button>
+                                <button onClick={placeBallInCylinder} disabled={!isGrabbing}>放置球体</button>
                             </div>
                     <div style={{marginTop: 8, fontSize: 12, opacity: 0.8}}>
                         {actStatus}
+                            </div>
+                            <div style={{marginTop: 4, fontSize: 12, opacity: 0.8}}>
+                                抓取状态: {isGrabbing ? '已抓取' : '未抓取'}
                             </div>
                         </div>
                         <div style={{position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
